@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timedelta
 import pickle
 import os
+import subprocess
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
@@ -22,6 +23,56 @@ try:
 except (ValueError, ImportError):
     gi.require_version('AppIndicator3', '0.1')
     from gi.repository import Gtk, Gdk, GLib, AppIndicator3
+
+
+# ---------------------------------------------------------------------------
+# IKONY SVG - generowane przy starcie i zapisane do ~/.config/yuki/icons/
+# ---------------------------------------------------------------------------
+ANGEL_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+  <ellipse cx="11" cy="3.5" rx="4.5" ry="1.2" fill="none" stroke="#FFD700" stroke-width="1.8"/>
+  <circle cx="11" cy="9" r="3.2" fill="#FF9EBC"/>
+  <path d="M7.5 10 Q2 7 3 13 Q5 14 7.5 12 Z" fill="#FFFFFF" stroke="#DDD" stroke-width="0.5"/>
+  <path d="M14.5 10 Q20 7 19 13 Q17 14 14.5 12 Z" fill="#FFFFFF" stroke="#DDD" stroke-width="0.5"/>
+  <circle cx="9.3" cy="8.8" r="0.7" fill="#333"/>
+  <circle cx="12.7" cy="8.8" r="0.7" fill="#333"/>
+  <path d="M9.8 10.2 Q11 11.2 12.2 10.2" fill="none" stroke="#333" stroke-width="0.5" stroke-linecap="round"/>
+  <ellipse cx="11" cy="15" rx="3" ry="4" fill="#FF9EBC"/>
+</svg>'''
+
+DEVIL_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+  <path d="M7.5 5.5 L6 1.5 L9 4.5 Z" fill="#CC0000"/>
+  <path d="M14.5 5.5 L16 1.5 L13 4.5 Z" fill="#CC0000"/>
+  <circle cx="11" cy="9" r="3.2" fill="#FF5555"/>
+  <ellipse cx="9.3" cy="8.5" rx="0.9" ry="0.6" fill="#FFD700"/>
+  <circle cx="9.3" cy="8.5" r="0.4" fill="#111"/>
+  <ellipse cx="12.7" cy="8.5" rx="0.9" ry="0.6" fill="#FFD700"/>
+  <circle cx="12.7" cy="8.5" r="0.4" fill="#111"/>
+  <path d="M8.2 7.2 L10.2 7.6" fill="none" stroke="#800000" stroke-width="0.7" stroke-linecap="round"/>
+  <path d="M13.8 7.2 L11.8 7.6" fill="none" stroke="#800000" stroke-width="0.7" stroke-linecap="round"/>
+  <path d="M9.5 10.5 Q11 10 12.5 10.8" fill="none" stroke="#800000" stroke-width="0.6" stroke-linecap="round"/>
+  <ellipse cx="11" cy="15" rx="3" ry="4" fill="#FF5555"/>
+  <path d="M14 18 Q17 19 16.5 21 L15.5 20.5 Q16 19.5 13.5 18.5 Z" fill="#CC0000"/>
+</svg>'''
+
+
+def setup_icons():
+    """Zapisuje SVG ikony do katalogu i zwraca path do icon theme"""
+    icon_base = os.path.expanduser("~/.config/yuki/icons")
+    icon_dir = os.path.join(icon_base, "22x22", "apps")
+    os.makedirs(icon_dir, exist_ok=True)
+
+    with open(os.path.join(icon_dir, "yuki_angel.svg"), 'w') as f:
+        f.write(ANGEL_SVG)
+    with open(os.path.join(icon_dir, "yuki_devil.svg"), 'w') as f:
+        f.write(DEVIL_SVG)
+
+    # index.theme wymagany przez GTK icon theme engine
+    theme_file = os.path.join(icon_base, "index.theme")
+    with open(theme_file, 'w') as f:
+        f.write("[Icon Theme]\nName=Yuki\nDirectories=22x22/apps\n\n[22x22/apps]\nSize=22\nType=Scalable\n")
+
+    return icon_base  # <- to jest icon_theme_path
+
 
 class MemorySystem:
     """System pamięci użytkownika"""
@@ -60,6 +111,7 @@ class MemorySystem:
             'user': user_msg,
             'bot': bot_response
         })
+        # Trzymamy ostatnie 50 rozmów
         if len(self.data['conversation_history']) > 50:
             self.data['conversation_history'] = self.data['conversation_history'][-50:]
         self.save_memory()
@@ -105,6 +157,7 @@ class MemorySystem:
         self.save_memory()
         return active_reminders
 
+
 class MiniGames:
     @staticmethod
     def rock_paper_scissors(user_choice):
@@ -133,8 +186,14 @@ class MiniGames:
         q, answer, category = random.choice(questions)
         return q, answer, f"Trivia time~! Category: {category}\n{q}"
 
+
 class AnimatedTrayApp:
     def __init__(self):
+        # ---------------------------------------------------------------------------
+        # SETUP IKONY
+        # ---------------------------------------------------------------------------
+        self.icon_theme_path = setup_icons()
+
         # Animation frames
         self.frame_open = """
       ⣿⠋⠙⠉⠉⡇⠀⣧⢣⣿⠔⣳⣶⡖⡯⢿⣇⣀⡴⣽⠶⡞⠚⢧⡀⠀⠀⠀⠀⠀
@@ -226,10 +285,6 @@ class AnimatedTrayApp:
         self.pomodoro_time_left = 0
         self.last_interaction = time.time()
         
-        # Typing animation
-        self.typing_active = False
-        self.typing_dots = 0
-        
         GLib.timeout_add_seconds(300, self.random_event_check)
         GLib.timeout_add_seconds(60, self.check_reminders)
         
@@ -237,10 +292,10 @@ class AnimatedTrayApp:
         self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
         self.window.set_decorated(False)
         self.window.set_skip_taskbar_hint(True)
-        self.window.set_skip_pager_hint(True)  # Don't show in window switcher
-        self.window.set_keep_above(True)  # Always stay on top!
-        self.window.set_accept_focus(True)  # Can receive focus
-        self.window.set_type_hint(Gdk.WindowTypeHint.DIALOG)  # Dialog windows stay on top better
+        self.window.set_skip_pager_hint(True)
+        self.window.set_keep_above(True)
+        self.window.set_accept_focus(True)
+        self.window.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         self.window.set_resizable(False)
         self.window.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.window.connect("button-press-event", self.on_button_press)
@@ -266,11 +321,42 @@ class AnimatedTrayApp:
 
         self.apply_styles()
 
-        # Tray Indicator
-        self.indicator = AppIndicator3.Indicator.new("yuki-ai", "face-smile", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
+        # ---------------------------------------------------------------------------
+        # TRAY INDICATOR - z left-click handlerem
+        # ---------------------------------------------------------------------------
+        self.indicator = AppIndicator3.Indicator.new(
+            "yuki-ai",
+            "yuki_angel",          # <- startowa ikona (aniolek = tryb normalny)
+            AppIndicator3.IndicatorCategory.APPLICATION_STATUS
+        )
+        # Ustawienie icon theme path - bez tego GTK nie znajdzie naszych SVG
+        self.indicator.set_icon_theme_path(self.icon_theme_path)
         self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+
+        # ---------------------------------------------------------------------------
+        # LEFT-CLICK HANDLER
+        # AppIndicator3 nie ma bezpośredniego left-click callback.
+        # Obejście: tworzymy UKRYTĄ menu z jednym "niewidzialnym" itemem jako separator,
+        # i podłączamy się do sygnału "activate" tego itemu.
+        # Ale lepsze obejście: ukrytym menu + nasłuchanie DBus activate sygnału.
+        #
+        # NAJPROSTO działający sposób na Ubuntu/GNOME:
+        # Tworzy menu z jednym niewidocznym itemem + separator.
+        # Menu otwiera się na RIGHT click (default).
+        # Na LEFT click AppIndicator3 wysyła sygnał "activate" jeśli menu ma
+        # co najmniej jeden item. My go przechwytujemy.
+        # ---------------------------------------------------------------------------
         menu = Gtk.Menu()
-        
+
+        # --- UKRYTY item jako trigger dla left-click activate ---
+        # Ten item się nie pojawi, bo dodamy separator jako pierwszy element
+        # i ten item będzie "nieaktywny". Ale sygnał activate menu się wysyśle.
+        self._activate_item = Gtk.MenuItem(label="")
+        self._activate_item.set_sensitive(False)
+        menu.append(self._activate_item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
         item = Gtk.MenuItem(label="Show/Hide")
         item.connect("activate", self.toggle_window)
         menu.append(item)
@@ -291,14 +377,86 @@ class AnimatedTrayApp:
         q_item = Gtk.MenuItem(label="Quit")
         q_item.connect("activate", lambda _: Gtk.main_quit())
         menu.append(q_item)
+
         menu.show_all()
         self.indicator.set_menu(menu)
+
+        # ---------------------------------------------------------------------------
+        # DBus left-click intercept
+        # AppIndicator3 na Ubuntu wysyła sygnał "org.ayatana.indicator.application"
+        # ale najniezawodniejsza metoda to nasłuchanie sygnału "activate" na Menu.
+        # Menu.connect("activate") NIE działa jak potrzebujemy.
+        #
+        # Najniezawodniejsze obejście na Ubuntu 22.04+:
+        # Łączymy się z DBus i nasłuchamy sygnału Activate na naszym indicatorze.
+        # ---------------------------------------------------------------------------
+        self._setup_dbus_left_click()
 
         GLib.timeout_add_seconds(1, self.animate)
         self.show_input_window()
         
         if self.memory.data['user_name']:
             self.chat_log.set_text(f"Welcome back, {self.memory.data['user_name']}-kun~! 💕")
+
+    # ---------------------------------------------------------------------------
+    # DBUS LEFT-CLICK HANDLER
+    # ---------------------------------------------------------------------------
+    def _setup_dbus_left_click(self):
+        """
+        Nasłucha DBus sygnału 'Activate' od AppIndicator.
+        Na Ubuntu/Unity - left-click na ikonę tray wysyła ten sygnał.
+        Na GNOME bez rozszerzenia - ta metoda może nie działać,
+        wtedy fallback to right-click -> Show/Hide.
+        """
+        try:
+            import dbus
+            from dbus.mainloop.glib import DBusGMainLoop
+            DBusGMainLoop(set_as_default=True)
+
+            self._dbus_session = dbus.SessionBus()
+
+            # Nasłuchamy sygnału na obiektach AppIndicator
+            # Sygnał idzie od "org.ayatana.indicator.application"
+            # ale prostsze jest nasłuchanie na naszym uniqueID
+            self._dbus_session.add_signal_receiver(
+                self._on_dbus_activate,
+                signal_name="Activate",
+                dbus_interface="org.ayatana.indicator.application.indicator"
+            )
+            # Alternatywnie dla nowszych systemów:
+            self._dbus_session.add_signal_receiver(
+                self._on_dbus_activate,
+                signal_name="Activate",
+                dbus_interface="org.kde.StatusNotifierItem"
+            )
+            print("DBus left-click listener: OK")
+        except ImportError:
+            print("dbus-python nie zainstalowane - left-click fallback na menu")
+        except Exception as e:
+            print(f"DBus setup error: {e} - fallback na menu")
+
+    def _on_dbus_activate(self, *args):
+        """Callback - uruchomiony przy left-click na ikonę tray"""
+        GLib.idle_add(self._handle_left_click)
+
+    def _handle_left_click(self):
+        """Otwiera okno Yuki przy left-click"""
+        if self.window.get_visible():
+            self.window.hide()
+        else:
+            self.show_input_window()
+
+    # ---------------------------------------------------------------------------
+    # ZMIANA IKONY W TRAYU
+    # ---------------------------------------------------------------------------
+    def update_tray_icon(self):
+        """Zmienia ikonę w trayu: diabelek w flirty mode, aniolek w normalnym"""
+        if self.flirty_mode:
+            self.indicator.set_icon("yuki_devil")
+        else:
+            self.indicator.set_icon("yuki_angel")
+
+    # ---------------------------------------------------------------------------
 
     def apply_styles(self):
         provider = Gtk.CssProvider()
@@ -330,6 +488,8 @@ class AnimatedTrayApp:
 
     def toggle_flirty_mode(self, widget):
         self.flirty_mode = widget.get_active()
+        # Zmiana ikony w trayu!
+        self.update_tray_icon()
         if self.flirty_mode:
             self.chat_log.set_text("Flirty mode ON~ Ehehe 💕😘")
         else:
@@ -342,37 +502,12 @@ class AnimatedTrayApp:
         else:
             self.show_input_window()
 
-    def start_typing_animation(self):
-        """Start the typing animation"""
-        self.typing_active = True
-        self.typing_dots = 0
-        self.animate_typing()
-    
-    def animate_typing(self):
-        """Animate typing with progressive dots"""
-        if not self.typing_active:
-            return False
-        
-        # Cycle: . .. ... . .. ... 
-        self.typing_dots = (self.typing_dots % 3) + 1
-        dots = "." * self.typing_dots
-        self.chat_log.set_text(f"Typing{dots}")
-        
-        # Continue every 500ms
-        GLib.timeout_add(500, self.animate_typing)
-        return False
-    
-    def stop_typing_animation(self):
-        """Stop the typing animation"""
-        self.typing_active = False
-
     def show_input_window(self):
         display = Gdk.Display.get_default()
         seat = display.get_default_seat()
         _, x, y = seat.get_pointer().get_position()
         self.window.show_all()
         
-        # Force keep above when showing
         self.window.set_keep_above(True)
         
         width, height = self.window.get_size()
@@ -381,7 +516,6 @@ class AnimatedTrayApp:
         self.window.move(x - (width / 2), target_y)
         self.window.present()
         
-        # Extra insurance to stay on top
         self.window.set_keep_above(True)
         
         self.entry.grab_focus()
@@ -394,19 +528,14 @@ class AnimatedTrayApp:
         self.update_typing_animation()
     
     def update_typing_animation(self):
-        """Update typing animation - adds dot every 0.5 seconds"""
+        """Update typing animation"""
         if not self.is_typing:
             return False
-        
-        # Cycle through 0, 1, 2, 3 dots
         self.typing_dots = (self.typing_dots % 3) + 1
         dots = "." * self.typing_dots
-        
         self.chat_log.set_text(f"Yuki is typing{dots}")
-        
-        # Continue animation
         self.typing_timer = GLib.timeout_add(500, self.update_typing_animation)
-        return False  # Return False because we're using a new timer each time
+        return False
     
     def stop_typing_animation(self):
         """Stop typing animation"""
@@ -451,7 +580,6 @@ class AnimatedTrayApp:
             return f"Nice to meet you, {name}-kun~! I'll remember that! 💕"
         
         if text_lower in ["reset memory", "forget me", "clear memory", "reset"]:
-            import os
             if os.path.exists(self.memory.memory_file):
                 os.remove(self.memory.memory_file)
             self.memory = MemorySystem()
@@ -623,7 +751,6 @@ class AnimatedTrayApp:
         response = dialog.run()
         dialog.destroy()
         if response == Gtk.ResponseType.YES:
-            import os
             if os.path.exists(self.memory.memory_file):
                 os.remove(self.memory.memory_file)
             self.memory = MemorySystem()
@@ -631,20 +758,17 @@ class AnimatedTrayApp:
             self.show_input_window()
 
     def get_ollama_response(self, user_text):
-        """Get AI response with occasional Japanese words"""
+        """Get AI response"""
         url = "http://localhost:11434/api/generate"
         
-        # Check commands first
         cmd_response = self.parse_command(user_text)
         if cmd_response:
             return cmd_response
         
-        # Get context
         context = self.memory.get_context(5)
         user_mood = self.memory.get_current_mood()
         user_name = self.memory.data['user_name'] or "friend"
         
-        # Build personality with Japanese word integration
         if self.flirty_mode:
             system_prompt = f"""You are Yuki, a confident and playful 18-year-old Japanese AI companion.
 You love witty banter, teasing, and making conversations fun.
@@ -706,7 +830,6 @@ Respond naturally to: {user_text}"""
             response = requests.post(url, json=payload, timeout=15)
             answer = response.json().get("response", "").strip()
             
-            # Check for non-English
             non_english_indicators = [
                 'je suis', 'le ', 'la ', ' du ', ' de ', 'vous ', 'nous ',
                 'el ', 'la ', 'los ', 'las ', ' que ', ' es ', 'está'
@@ -760,7 +883,6 @@ Respond naturally to: {user_text}"""
         
         self.last_interaction = time.time()
         
-        # Emotion keywords
         positive_words = ["yes", "yeah", "great", "awesome", "nice", "good", 
                         "thanks", "thank", "cool", "love", "haha", "lol", "😊",
                         "cute", "kawaii", "sugoi", "amazing", "wonderful", "happy",
@@ -770,10 +892,8 @@ Respond naturally to: {user_text}"""
                         "hate", "angry", "upset", "cry", "crying", "😢", "😭",
                         "wrong", "mistake", "fail", "failed", "disappointed", "sucks"]
         
-        sexy_words = ["sex", "sexy", "hot", "flirty", "seductive", "desire", "tempt", 
-                     "ass", "butt", "kiss", "beautiful", "gorgeous"]
+        sexy_words = ["ass", "butt"]
             
-        # Special commands
         if text.lower() in ["bye", "goodbye", "exit", "quit"]:
             self.chat_log.set_text("Mata ne~! Sayonara! (◕‿◕)ノ 👋")
             GLib.timeout_add_seconds(1, lambda: self.window.hide())
@@ -786,20 +906,16 @@ Respond naturally to: {user_text}"""
             entry.set_text("")
             return
         
-        # Always use AI (no quick responses)
         self.start_typing_animation()
         
         def ask():
             res = self.get_ollama_response(text)
             
-            # Stop typing and show response
             GLib.idle_add(self.stop_typing_animation)
             GLib.idle_add(self.chat_log.set_text, res)
             
-            # Save to memory
             self.memory.add_conversation(text, res)
             
-            # Check emotions
             combined_text = (text + " " + res).lower()
             
             if any(w in combined_text for w in sexy_words):
@@ -835,6 +951,7 @@ Respond naturally to: {user_text}"""
         self.is_sad = False
         self.is_sexy = False
         return False
+
 
 if __name__ == "__main__":
     app = AnimatedTrayApp()
